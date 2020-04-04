@@ -34,6 +34,7 @@ import org.apache.cayenne.map.SelectQueryDescriptor;
 import org.apache.cayenne.query.Ordering;
 import org.apache.cayenne.query.QueryMetadata;
 import org.apache.cayenne.query.SortOrder;
+import org.apache.cayenne.wocompat.EOObjEntity.UnsupportedCrossModelRelationship;
 import org.apache.cayenne.wocompat.parser.Parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -177,7 +178,15 @@ public class EOModelProcessor {
 			while (queries.hasNext()) {
 				String queryName = (String) queries.next();
 				EOObjEntity entity = (EOObjEntity) dataMap.getObjEntity(name);
-				makeQuery(helper, entity, queryName);
+				try {
+					makeQuery(helper, entity, queryName);
+				}
+				catch (ExpressionException e) {
+					logger.warn("Cannot import query '"+queryName+"' of entity '"+name+": "+e.getMessage());
+				}
+				catch (UnsupportedCrossModelRelationship e) {
+					logger.warn(e.getMessage());
+				}
 			}
 		}
 
@@ -607,6 +616,9 @@ public class EOModelProcessor {
 			// target maybe null for cross-EOModel relationships
 			// ignoring those now.
 			if (target == null) {
+				if (objEntity instanceof EOObjEntity) {
+					((EOObjEntity)objEntity).addCrossModelRelationship(relName, targetName);
+				}
 				continue;
 			}
 
@@ -657,20 +669,24 @@ public class EOModelProcessor {
 			}
 
 			// only create obj relationship if it is a class property
-			if (classProps.contains(relName)) {
-				ObjRelationship rel = new ObjRelationship();
-				rel.setName(relName);
-				rel.setSourceEntity(objEntity);
-				rel.setTargetEntityName(target);
-				objEntity.addRelationship(rel);
+			ObjRelationship rel = new ObjRelationship();
+			rel.setName(relName);
+			rel.setSourceEntity(objEntity);
+			rel.setTargetEntityName(target);
+			
+			if (dbRel != null) {
+				rel.addDbRelationship(dbRel);
+			}
 
-				if (dbRel != null) {
-					rel.addDbRelationship(dbRel);
-				}
+			if (classProps.contains(relName)) {
+				objEntity.addRelationship(rel);
+			}
+			else if (objEntity instanceof EOObjEntity) {
+				((EOObjEntity)objEntity).addInvisibleRelationship(rel);
 			}
 		}
 	}
-
+	
 	/**
 	 * Create reverse DbRelationships that were not created so far, since
 	 * Cayenne requires them.

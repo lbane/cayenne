@@ -25,11 +25,13 @@ import org.apache.cayenne.exp.ExpressionException;
 import org.apache.cayenne.exp.ExpressionFactory;
 import org.apache.cayenne.map.Entity;
 import org.apache.cayenne.map.ObjEntity;
+import org.apache.cayenne.map.ObjRelationship;
 import org.apache.cayenne.map.Relationship;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -41,11 +43,19 @@ import java.util.function.Function;
  */
 public class EOObjEntity extends ObjEntity {
     
+	public static class UnsupportedCrossModelRelationship extends RuntimeException {
+		UnsupportedCrossModelRelationship(String msg) {
+			super(msg);
+		}
+	}
+	
     protected boolean subclass;
     protected boolean abstractEntity;
 
     private Collection filteredQueries;
     private Map eoMap;
+    private Map<String, ObjRelationship> invisibleRelationships = new HashMap<>();
+	private Map<String, String> crossModelRelationship = new HashMap<>();
 
     public EOObjEntity() {
     }
@@ -133,6 +143,22 @@ public class EOObjEntity extends ObjEntity {
         this.subclass = subclass;
     }
 
+	public void addInvisibleRelationship(ObjRelationship rel) {
+		invisibleRelationships.put(rel.getName(), rel);
+	}
+	
+	public ObjRelationship getInvisibleRelationship(String relName) {
+		return invisibleRelationships.get(relName);
+	}
+	
+	public void addCrossModelRelationship(String relName, String targetName) {
+		crossModelRelationship.put(relName, targetName);
+	}
+	
+	public String getCrossModelRelationshipTarget(String relName) {
+		return crossModelRelationship.get(relName);
+	}
+	
     /**
      * Translates query name local to the ObjEntity to the global name. This translation
      * is needed since EOModels store queries by entity, while Cayenne DataMaps store them
@@ -181,32 +207,62 @@ public class EOObjEntity extends ObjEntity {
                     if (buffer.length() > 0) {
                         buffer.append(Entity.PATH_SEPARATOR);
                     }
-
+                    
+                    // we build a db path, so will also check dbEntity relationship
+                    Relationship r = entity.getDbEntity().getRelationship(chunk);
+                    if (r == null) {
+                    	
+                    	String target = entity.getCrossModelRelationshipTarget(chunk);
+                    	if (target != null) {
+                    		throw new UnsupportedCrossModelRelationship("Cross model relationship '"+chunk+"' from '"+entity.getName()+"' to '"+target+"' not supported");
+                    	}
+                    	
+                    	throw new ExpressionException("Invalid path component: " + chunk);
+                    }
+                    
                     buffer.append(chunk);
 
-                    Relationship r = entity.getRelationship(chunk);
+                    // but the EO-Relationships are build with Entity-relationships, and we need to get
+                    r = entity.getRelationship(chunk);
                     if (r == null) {
-                        throw new ExpressionException("Invalid path component: " + chunk);
+                    	
+                    	// some of the eoenity relationships are not entity attributes (visible)
+                    	// check those also
+                    	r = entity.getInvisibleRelationship(chunk);
+                    	
+                    	if (r == null) {
+                    		throw new ExpressionException("Invalid path component: " + chunk);
+                    	}
                     }
+                    
 
                     entity = (EOObjEntity) r.getTargetEntity();
                 }
-                // this is an attribute...
                 else {
+                	// this is an attribute OR a relationship
 
-                    List attributes = (List) entity.getEoMap().get("attributes");
-                    Iterator it = attributes.iterator();
-                    while (it.hasNext()) {
-                        Map attribute = (Map) it.next();
-                        if (chunk.equals(attribute.get("name"))) {
-
-                            if (buffer.length() > 0) {
-                                buffer.append(Entity.PATH_SEPARATOR);
-                            }
-
-                            buffer.append(attribute.get("columnName"));
-                            break;
+                    Relationship r = entity.getDbEntity().getRelationship(chunk);
+                    if (r != null) {
+                        if (buffer.length() > 0) {
+                            buffer.append(Entity.PATH_SEPARATOR);
                         }
+                    	buffer.append(chunk);
+                    }
+                    else {
+                    	List attributes = (List) entity.getEoMap().get("attributes");
+                    	Iterator it = attributes.iterator();
+                    	while (it.hasNext()) {
+                    		Map attribute = (Map) it.next();
+                    		if (chunk.equals(attribute.get("name"))) {
+
+                    			if (buffer.length() > 0) {
+                    				buffer.append(Entity.PATH_SEPARATOR);
+                    			}
+
+                    			buffer.append(attribute.get("columnName"));
+                    			break;
+                    		}
+                    	}
                     }
                 }
             }

@@ -40,6 +40,12 @@ import org.apache.cayenne.wocompat.parser.Parser;
  * information.
  */
 public class EOModelHelper {
+	
+	public static class CrossModelException extends Exception {
+		CrossModelException(String msg) {
+			super(msg);
+		}
+	}
 
 	private Parser plistParser = new Parser();
 	protected URL modelUrl;
@@ -116,6 +122,9 @@ public class EOModelHelper {
 			String parentEntity = (String) entityPlistMap.get("parent");
 			while (parentEntity != null) {
 				Map parentEntityPListMap = entityPListMap(parentEntity);
+				if (parentEntityPListMap == null) {
+					throw new CrossModelException("Cannot import entity '"+name+"', because no plist for parent entity '"+parentEntity+"' found. This may be an unsupported cross model parent relationship.");
+				}
 				List parentClassProps = (List) parentEntityPListMap.get("classProperties");
 				classProperties.removeAll(parentClassProps);
 				// get client class information of parent
